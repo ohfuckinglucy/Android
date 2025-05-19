@@ -30,18 +30,18 @@ import com.example.visprog.ui.theme.Dblue
 import com.example.visprog.ui.theme.Lblue
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
-import java.io.File
-import java.io.FileWriter
 import java.io.IOException
 import com.google.gson.Gson
-import java.io.OutputStream
 import java.io.OutputStreamWriter
+
 
 class MainActivity : ComponentActivity() {
     private lateinit var fusedLocationClient: FusedLocationProviderClient
 
     private var latitude by mutableStateOf<Double?>(null)
     private var longitude by mutableStateOf<Double?>(null)
+    private var accuracy by mutableStateOf<Float?>(null)
+    private var time by mutableStateOf<Long?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,7 +57,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         } else {
             requestLocation()
@@ -67,9 +71,7 @@ class MainActivity : ComponentActivity() {
             val navController = rememberNavController()
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
-                containerColor = Dblue,
-                topBar = {},
-                bottomBar = {}
+                containerColor = Dblue
             ) { paddingValues ->
                 NavHost(
                     navController = navController,
@@ -77,7 +79,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.padding(paddingValues)
                 ) {
                     composable("home") {
-                        HomeScreen(navController, latitude, longitude)
+                        HomeScreen(navController, latitude, longitude, accuracy, time)
                     }
                     composable("calculator") {
                         CalculatorScreen()
@@ -90,22 +92,40 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    data class Coordinates(val latitude: Double?, val longitude: Double?)
+    data class Coordinates(
+        val latitude: Double?,
+        val longitude: Double?,
+        val accuracy: Float?,
+        val time: Long?
+    )
 
     private fun requestLocation() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null) {
                     latitude = location.latitude
                     longitude = location.longitude
+                    accuracy = location.accuracy
+                    time = location.time
 
-                    saveCoordinates(this, Coordinates(latitude, longitude))
+                    saveCoordinates(
+                        this,
+                        Coordinates(latitude, longitude, accuracy, time)
+                    )
                 } else {
                     Toast.makeText(this, "Местоположение недоступно", Toast.LENGTH_SHORT).show()
                 }
             }
         } else {
-            Toast.makeText(this, "Нет разрешения на доступ к местоположению", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "Нет разрешения на доступ к местоположению",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 }
@@ -122,22 +142,26 @@ private fun saveCoordinates(context: Context, coordinates: MainActivity.Coordina
         }
 
         val resolver = context.contentResolver
-        val uri: Uri? = resolver.insert(MediaStore.Files.getContentUri("external"), contentValues)
+        val uri: Uri? = resolver.insert(
+            MediaStore.Files.getContentUri("external"),
+            contentValues
+        )
 
         if (uri != null) {
             try {
-                val outputStream: OutputStream? = resolver.openOutputStream(uri)
-                if (outputStream != null) {
-                    val writer = OutputStreamWriter(outputStream)
-                    writer.write(json)
-                    writer.close()
-
-                    Toast.makeText(context, "Координаты сохранены в папку Загрузки", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(context, "Ошибка при открытии потока записи", Toast.LENGTH_SHORT).show()
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    OutputStreamWriter(outputStream).use { writer ->
+                        writer.write(json)
+                    }
                 }
+                Toast.makeText(
+                    context,
+                    "Координаты сохранены в папку Загрузки",
+                    Toast.LENGTH_SHORT
+                ).show()
             } catch (e: IOException) {
-                Toast.makeText(context, "Ошибка при сохранении координат", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Ошибка при сохранении координат", Toast.LENGTH_SHORT)
+                    .show()
             }
         } else {
             Toast.makeText(context, "Не удалось создать файл", Toast.LENGTH_SHORT).show()
@@ -145,9 +169,14 @@ private fun saveCoordinates(context: Context, coordinates: MainActivity.Coordina
     }
 }
 
-
 @Composable
-fun HomeScreen(navController: NavHostController, latitude: Double?, longitude: Double?) {
+fun HomeScreen(
+    navController: NavHostController,
+    latitude: Double?,
+    longitude: Double?,
+    accuracy: Float?,
+    time: Long?
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -178,11 +207,20 @@ fun HomeScreen(navController: NavHostController, latitude: Double?, longitude: D
         if (latitude != null && longitude != null) {
             Text("Широта: $latitude")
             Text("Долгота: $longitude")
+            accuracy?.let { Text("Точность: ±${"%.1f".format(it)} м") }
+            time?.let {
+                val formatted = java.text.SimpleDateFormat(
+                    "HH:mm:ss dd.MM.yyyy",
+                    java.util.Locale.getDefault()
+                ).format(java.util.Date(it))
+                Text("Время: $formatted")
+            }
         } else {
             Text("Координаты не получены")
         }
     }
 }
+
 
 @Composable
 fun CalculatorScreen() {
@@ -198,9 +236,6 @@ fun CalculatorScreen() {
 
 @Composable
 fun PlayerScreen() {
-    val context = LocalContext.current
-    val viewModel: PlayerViewModel = viewModel(factory = PlayerViewModelFactory(context))
-
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
