@@ -33,6 +33,8 @@ import com.google.android.gms.location.LocationServices
 import java.io.IOException
 import com.google.gson.Gson
 import java.io.OutputStreamWriter
+import org.zeromq.ZContext
+import org.zeromq.ZMQ
 
 
 class MainActivity : ComponentActivity() {
@@ -92,6 +94,34 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun sendCoordinatesToServer(coordinates: Coordinates) {
+        val gson = Gson()
+        val json = gson.toJson(coordinates)
+
+        Thread {
+            ZContext().use { context ->
+                val socket = context.createSocket(ZMQ.REQ)
+                socket.connect("tcp://192.168.0.14:8080")
+
+                try {
+                    socket.send(json, 0)
+                    val reply = socket.recvStr()
+                    println("Ответ сервера: $reply")
+                    runOnUiThread {
+                        Toast.makeText(this, "Отправлено на сервер: $reply", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    runOnUiThread {
+                        Toast.makeText(this, "Ошибка отправки: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                } finally {
+                    socket.close()
+                }
+            }
+        }.start()
+    }
+
     data class Coordinates(
         val latitude: Double?,
         val longitude: Double?,
@@ -112,10 +142,11 @@ class MainActivity : ComponentActivity() {
                     accuracy = location.accuracy
                     time = location.time
 
-                    saveCoordinates(
-                        this,
-                        Coordinates(latitude, longitude, accuracy, time)
-                    )
+                    val coords = Coordinates(latitude, longitude, accuracy, time)
+                    saveCoordinates(this, coords)
+
+                    sendCoordinatesToServer(coords)
+
                 } else {
                     Toast.makeText(this, "Местоположение недоступно", Toast.LENGTH_SHORT).show()
                 }

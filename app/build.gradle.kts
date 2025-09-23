@@ -73,4 +73,5 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.5.2")
     implementation("com.google.code.gson:gson:2.8.8")
+    implementation("org.zeromq:jeromq:0.5.0")
 }
