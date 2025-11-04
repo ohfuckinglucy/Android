@@ -1,20 +1,17 @@
 package com.example.visprog
 
 import android.Manifest
-import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.provider.MediaStore
+import android.telephony.TelephonyManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,45 +25,39 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.visprog.ui.theme.Dblue
 import com.example.visprog.ui.theme.Lblue
-import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
-import java.io.IOException
 import com.google.gson.Gson
-import java.io.OutputStreamWriter
-import org.zeromq.ZContext
 import org.zeromq.ZMQ
+import java.io.File
+import java.util.*
+import kotlin.concurrent.scheduleAtFixedRate
 
+private var timer: Timer? = null
 
 class MainActivity : ComponentActivity() {
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
 
-    private var latitude by mutableStateOf<Double?>(null)
-    private var longitude by mutableStateOf<Double?>(null)
-    private var accuracy by mutableStateOf<Float?>(null)
-    private var time by mutableStateOf<Long?>(null)
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.all { it.value }) {
+            startPeriodicSending(this)
+        } else {
+            Toast.makeText(this, "Нужны разрешения для работы", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-
-        val requestPermissionLauncher =
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
-                if (isGranted) {
-                    requestLocation()
-                } else {
-                    Toast.makeText(this, "Разрешение не получено", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (hasPermissions()) {
+            startPeriodicSending(this)
         } else {
-            requestLocation()
+            permissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.READ_PHONE_STATE
+                )
+            )
         }
 
         setContent {
@@ -74,140 +65,143 @@ class MainActivity : ComponentActivity() {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 containerColor = Dblue
-            ) { paddingValues ->
+            ) { padding ->
                 NavHost(
                     navController = navController,
                     startDestination = "home",
-                    modifier = Modifier.padding(paddingValues)
+                    modifier = Modifier.padding(padding)
                 ) {
-                    composable("home") {
-                        HomeScreen(navController, latitude, longitude, accuracy, time)
-                    }
-                    composable("calculator") {
-                        CalculatorScreen()
-                    }
-                    composable("player") {
-                        PlayerScreen()
-                    }
+                    composable("home") { HomeScreen(navController) }
+                    composable("calculator") { CalculatorScreen() }
+                    composable("player") { PlayerScreen() }
                 }
             }
         }
     }
 
-    private fun sendCoordinatesToServer(coordinates: Coordinates) {
-        val gson = Gson()
-        val json = gson.toJson(coordinates)
-
-        Thread {
-            ZContext().use { context ->
-                val socket = context.createSocket(ZMQ.REQ)
-                socket.connect("tcp://192.168.0.14:8080")
-
-                try {
-                    socket.send(json, 0)
-                    val reply = socket.recvStr()
-                    println("Ответ сервера: $reply")
-                    runOnUiThread {
-                        Toast.makeText(this, "Отправлено на сервер: $reply", Toast.LENGTH_SHORT).show()
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    runOnUiThread {
-                        Toast.makeText(this, "Ошибка отправки: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
-                } finally {
-                    socket.close()
-                }
-            }
-        }.start()
+    override fun onDestroy() {
+        super.onDestroy()
+        stopPeriodicSending()
     }
 
-    data class Coordinates(
-        val latitude: Double?,
-        val longitude: Double?,
-        val accuracy: Float?,
-        val time: Long?
-    )
+    private fun hasPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this, Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+}
 
-    private fun requestLocation() {
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                if (location != null) {
-                    latitude = location.latitude
-                    longitude = location.longitude
-                    accuracy = location.accuracy
-                    time = location.time
+fun startPeriodicSending(context: Context) {
+    if (timer != null) return
 
-                    val coords = Coordinates(latitude, longitude, accuracy, time)
-                    saveCoordinates(this, coords)
+    val gson = Gson()
+    val file = File(context.filesDir, "pending.jsonl")
 
-                    sendCoordinatesToServer(coords)
+    timer = Timer()
+    timer!!.scheduleAtFixedRate(0, 5000) {
+        if (!hasPerms(context)) return@scheduleAtFixedRate
 
-                } else {
-                    Toast.makeText(this, "Местоположение недоступно", Toast.LENGTH_SHORT).show()
+        val fused = LocationServices.getFusedLocationProviderClient(context)
+        fused.lastLocation.addOnSuccessListener { location ->
+            if (location == null) return@addOnSuccessListener
+
+            val loc = LocationData(
+                latitude = location.latitude,
+                longitude = location.longitude,
+                altitude = if (location.hasAltitude()) location.altitude else null,
+                timestamp = location.time,
+                speed = if (location.hasSpeed()) location.speed else null,
+                accuracy = location.accuracy
+            )
+
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            val cells = mutableListOf<CellInfoLte>()
+            tm.allCellInfo?.forEach { c ->
+                if (c is android.telephony.CellInfoLte && c.isRegistered) {
+                    val id = c.cellIdentity
+                    val ss = c.cellSignalStrength
+                    val identity = CellIdentityLte(
+                        band = id.bands?.toList(),
+                        cellIdentity = id.ci.toLong(),
+                        earfcn = id.earfcn,
+                        mcc = id.mccString,
+                        mnc = id.mncString,
+                        pci = id.pci,
+                        tac = id.tac
+                    )
+                    val signal = CellSignalStrengthLte(
+                        asuLevel = ss.asuLevel,
+                        cqi = ss.cqi,
+                        rsrp = ss.rsrp,
+                        rsrq = ss.rsrq,
+                        rssi = ss.rssi,
+                        rssnr = ss.rssnr,
+                        timingAdvance = ss.timingAdvance
+                    )
+                    cells.add(CellInfoLte(identity, signal))
                 }
             }
-        } else {
-            Toast.makeText(
-                this,
-                "Нет разрешения на доступ к местоположению",
-                Toast.LENGTH_SHORT
-            ).show()
+
+            val data = NetworkData(loc, cells)
+            val json = gson.toJson(data)
+            sendData(context, json, file)
         }
     }
 }
 
-private fun saveCoordinates(context: Context, coordinates: MainActivity.Coordinates) {
-    val gson = Gson()
-    val json = gson.toJson(coordinates)
+fun sendData(context: Context, json: String, file: File) {
+    Thread {
+        try {
+            val ctx = ZMQ.context(1)
+            val socket = ctx.socket(ZMQ.REQ)
+            socket.connect("tcp://192.168.0.14:8080")
+            socket.setSendTimeOut(2000)
+            socket.setReceiveTimeOut(2000)
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "coordinates.json")
-            put(MediaStore.MediaColumns.MIME_TYPE, "application/json")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/")
-        }
-
-        val resolver = context.contentResolver
-        val uri: Uri? = resolver.insert(
-            MediaStore.Files.getContentUri("external"),
-            contentValues
-        )
-
-        if (uri != null) {
-            try {
-                resolver.openOutputStream(uri)?.use { outputStream ->
-                    OutputStreamWriter(outputStream).use { writer ->
-                        writer.write(json)
-                    }
+            if (file.exists()) {
+                file.readLines().forEach {
+                    socket.send(it)
+                    socket.recv()
                 }
-                Toast.makeText(
-                    context,
-                    "Координаты сохранены в папку Загрузки",
-                    Toast.LENGTH_SHORT
-                ).show()
-            } catch (e: IOException) {
-                Toast.makeText(context, "Ошибка при сохранении координат", Toast.LENGTH_SHORT)
-                    .show()
+                file.delete()
             }
-        } else {
-            Toast.makeText(context, "Не удалось создать файл", Toast.LENGTH_SHORT).show()
+
+            socket.send(json)
+            socket.recv()
+            socket.close()
+            ctx.close()
+
+            (context as? ComponentActivity)?.runOnUiThread {
+                Toast.makeText(context, "Отправлено", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            file.appendText(json + "\n")
+            (context as? ComponentActivity)?.runOnUiThread {
+                Toast.makeText(context, "Сохранено локально", Toast.LENGTH_SHORT).show()
+            }
         }
-    }
+    }.start()
+}
+
+fun stopPeriodicSending() {
+    timer?.cancel()
+    timer = null
+}
+
+fun hasPerms(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.READ_PHONE_STATE
+            ) == PackageManager.PERMISSION_GRANTED
 }
 
 @Composable
-fun HomeScreen(
-    navController: NavHostController,
-    latitude: Double?,
-    longitude: Double?,
-    accuracy: Float?,
-    time: Long?
-) {
+fun HomeScreen(navController: NavHostController) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -232,26 +226,8 @@ fun HomeScreen(
         ) {
             Text(text = "Открыть плеер", color = Color.Black)
         }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        if (latitude != null && longitude != null) {
-            Text("Широта: $latitude")
-            Text("Долгота: $longitude")
-            accuracy?.let { Text("Точность: ±${"%.1f".format(it)} м") }
-            time?.let {
-                val formatted = java.text.SimpleDateFormat(
-                    "HH:mm:ss dd.MM.yyyy",
-                    java.util.Locale.getDefault()
-                ).format(java.util.Date(it))
-                Text("Время: $formatted")
-            }
-        } else {
-            Text("Координаты не получены")
-        }
     }
 }
-
 
 @Composable
 fun CalculatorScreen() {
@@ -267,19 +243,16 @@ fun CalculatorScreen() {
 
 @Composable
 fun PlayerScreen() {
+    val context = LocalContext.current
+    val viewModel: PlayerViewModel = viewModel(factory = PlayerViewModelFactory(context))
+
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(text = "Плеер")
-        val viewModel: PlayerViewModel = viewModel(factory = PlayerViewModelFactory(LocalContext.current))
-
-        Column {
-            RequestStoragePermission {
-                viewModel.loadAudioFiles()
-            }
-            MusicPlayerScreen(viewModel)
-        }
+        RequestStoragePermission { viewModel.loadAudioFiles() }
+        MusicPlayerScreen(viewModel)
     }
 }
