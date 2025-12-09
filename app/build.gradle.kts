@@ -75,4 +75,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.5.2")
     implementation("com.google.code.gson:gson:2.8.8")
     implementation("org.zeromq:jeromq:0.5.0")
+    implementation("com.google.android.gms:play-services-location:21.0.1")
 }

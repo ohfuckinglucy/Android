@@ -1,10 +1,5 @@
 package com.example.visprog
 
-data class NetworkData(
-    val location: LocationData,
-    val cellInfoLte: List<CellInfoLte>
-)
-
 data class LocationData(
     val latitude: Double,
     val longitude: Double,
@@ -12,11 +7,6 @@ data class LocationData(
     val timestamp: Long,
     val speed: Float?,
     val accuracy: Float
-)
-
-data class CellInfoLte(
-    val cellIdentity: CellIdentityLte,
-    val signalStrength: CellSignalStrengthLte
 )
 
 data class CellIdentityLte(
@@ -37,4 +27,14 @@ data class CellSignalStrengthLte(
     val rssi: Int,
     val rssnr: Int,
     val timingAdvance: Int
+)
+
+data class CellInfoLte(
+    val identity: CellIdentityLte,
+    val signal: CellSignalStrengthLte
+)
+
+data class NetworkData(
+    val location: LocationData,
+    val cells: List<CellInfoLte>
 )
