@@ -137,7 +137,7 @@ fun CalculatorApp() {
                     keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                     colors = TextFieldDefaults.colors(
-                        unfocusedContainerColor = color(),
+                        unfocusedContainerColor = Lblue,
                         focusedContainerColor = Dblue,
                         unfocusedTextColor = Color.Black,
                         focusedTextColor = Color.Black
@@ -149,9 +149,6 @@ fun CalculatorApp() {
         }
     }
 }
-
-@Composable
-private fun color() = Lblue
 
 fun calculateResult(input1: String, input2: String, operation: String): Int {
     val num1 = input1.toIntOrNull()
@@ -190,6 +187,7 @@ suspend fun PointerInputScope.detectGestures(
 
             val dx = up.x - down.x
             val dy = up.y - down.y
+
             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
             if (distance < 50f) continue

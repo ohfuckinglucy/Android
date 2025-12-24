@@ -60,7 +60,6 @@ fun MusicPlayerScreen(viewModel: PlayerViewModel) {
             }
         }
 
-
         Slider(
             value = viewModel.progress,
             onValueChange = { viewModel.seekTo(it) },

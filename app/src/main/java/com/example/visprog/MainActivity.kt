@@ -149,7 +149,6 @@ class MainActivity : ComponentActivity() {
         var isClearing by remember { mutableStateOf(false) }
         var recordCount by remember { mutableStateOf(0) }
 
-        // Обновление количества записей каждые 1.5 секунды
         LaunchedEffect(file) {
             while (true) {
                 recordCount = try {
